@@ -29,6 +29,7 @@ pub struct TrimConfig {
     pub flip: bool,
     pub verbose: bool,
     pub gzip: bool,
+    pub return_cuts_idxs: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -45,4 +46,5 @@ pub struct KitConfig {
     pub use_extended: bool,
     pub alpha: f32,
     pub gzip: bool,
+    pub return_cuts_idxs: bool,
 }

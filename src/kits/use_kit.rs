@@ -96,6 +96,7 @@ pub fn demux_using_kit(fastq_files: &[PathBuf], config: &KitConfig) -> anyhow::R
         flip: false,
         verbose: config.verbose,
         gzip: config.gzip,
+        return_cuts_idxs: config.return_cuts_idxs,
     };
     trim_matches(
         format!("{output_folder}/filtered.tsv").as_str(),

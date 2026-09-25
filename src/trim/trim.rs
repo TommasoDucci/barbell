@@ -254,7 +254,8 @@ pub fn process_read_and_anno(
     label_config: &LabelConfig,
     skip_trim: bool,
     flip: bool,
-) -> Vec<(Vec<u8>, Vec<u8>, String, String)> {
+    return_cuts_idxs: bool,
+) -> Vec<(Vec<u8>, Vec<u8>, String, String, Option<(usize, usize, bool)>)> {
     let mut results = Vec::new();
     let seq_len = seq.len();
 
@@ -280,7 +281,8 @@ pub fn process_read_and_anno(
             qual[slice.start..slice.end].to_vec()
         };
 
-        if flip && should_flip(&slice.annotations) {
+        let flipped = flip && should_flip(&slice.annotations);
+        if flipped {
             trimmed_seq = reverse_complement(&trimmed_seq);
             trimmed_qual.reverse();
         }
@@ -293,7 +295,9 @@ pub fn process_read_and_anno(
         } else {
             format!("_{slice_count}")
         };
-        results.push((trimmed_seq, trimmed_qual, group_label, read_suffix));
+        // Coordinates on the original read, before flipping
+        let cut_idxs = return_cuts_idxs.then_some((slice.start, slice.end, flipped));
+        results.push((trimmed_seq, trimmed_qual, group_label, read_suffix, cut_idxs));
     }
 
     results
@@ -399,13 +403,20 @@ pub fn trim_matches(
                         .qual()
                         .ok_or_else(|| anyhow!("FASTQ record '{read_id}' has no quality scores"))?;
 
-                    let results: Vec<(Vec<u8>, Vec<u8>, String, String)> = process_read_and_anno(
+                    let results: Vec<(
+                        Vec<u8>,
+                        Vec<u8>,
+                        String,
+                        String,
+                        Option<(usize, usize, bool)>,
+                    )> = process_read_and_anno(
                         seq.as_ref(),
                         qual,
                         annotations,
                         &label_config,
                         config.skip_trim,
                         config.flip,
+                        config.return_cuts_idxs,
                     );
 
                     if !results.is_empty() {
@@ -422,7 +433,7 @@ pub fn trim_matches(
                         progress.inc(TRIMMED_SPLIT_IDX);
                     }
 
-                    for (trimmed_seq, trimmed_qual, group, read_suffix) in results {
+                    for (trimmed_seq, trimmed_qual, group, read_suffix, cut_idxs) in results {
                         // Get or create writer for this group
                         if !writers.contains_key(&group) {
                             let output_file = if config.gzip {
@@ -449,12 +460,19 @@ pub fn trim_matches(
                             .get_mut(&group)
                             .expect("writer should exist after insertion");
 
+                        let cut_tags = match cut_idxs {
+                            Some((start, end, flipped)) => {
+                                format!("\tbs:i:{start}\tbe:i:{end}\tbf:i:{}", flipped as u8)
+                            }
+                            None => String::new(),
+                        };
+
                         // Write FASTQ format
                         if config.write_full_header && !desc.is_empty() {
-                            writeln!(writer, "@{read_id}{read_suffix} {desc}")
+                            writeln!(writer, "@{read_id}{read_suffix} {desc}{cut_tags}")
                                 .expect("Failed to write header");
                         } else {
-                            writeln!(writer, "@{read_id}{read_suffix}")
+                            writeln!(writer, "@{read_id}{read_suffix}{cut_tags}")
                                 .expect("Failed to write header");
                         }
                         writeln!(writer, "{}", String::from_utf8_lossy(&trimmed_seq))
@@ -578,14 +596,20 @@ mod tests {
         ];
 
         let label_config = LabelConfig::new(true, true, true, true, None);
-        let results = process_read_and_anno(seq, qual, &annotations, &label_config, false, false);
+        let results =
+            process_read_and_anno(seq, qual, &annotations, &label_config, false, false, false);
 
         assert_eq!(results.len(), 1);
-        let (trimmed_seq, trimmed_qual, group_label, _) = &results[0];
+        let (trimmed_seq, trimmed_qual, group_label, _, _) = &results[0];
         println!("trimmed_seq: {}", String::from_utf8_lossy(trimmed_seq));
         assert_eq!(trimmed_seq, b"AAAA");
         assert_eq!(trimmed_qual, b"IIII");
         assert_eq!(group_label, "Fbar_fw__Rbar_fw");
+        assert_eq!(results[0].4, None);
+
+        let results =
+            process_read_and_anno(seq, qual, &annotations, &label_config, false, false, true);
+        assert_eq!(results[0].4, Some((8, 12, false)));
     }
 
     #[test]
@@ -670,16 +694,17 @@ mod tests {
         ];
 
         let label_config = LabelConfig::new(true, true, true, true, None);
-        let results = process_read_and_anno(seq, qual, &annotations, &label_config, false, false);
+        let results =
+            process_read_and_anno(seq, qual, &annotations, &label_config, false, false, false);
 
         assert_eq!(results.len(), 2);
 
-        let (trimmed_seq1, trimmed_qual1, label1, _) = &results[0];
+        let (trimmed_seq1, trimmed_qual1, label1, _, _) = &results[0];
         assert_eq!(trimmed_seq1, b"AAAAAAAAAAAA");
         assert_eq!(trimmed_qual1, b"IIIIIIIIIIII");
         assert_eq!(label1, "F1_fw__R1_fw");
 
-        let (trimmed_seq2, trimmed_qual2, label2, _) = &results[1];
+        let (trimmed_seq2, trimmed_qual2, label2, _, _) = &results[1];
         assert_eq!(trimmed_seq2, b"GG");
         assert_eq!(trimmed_qual2, b"II");
         assert_eq!(label2, "F2_fw__R2_fw");
@@ -728,14 +753,16 @@ mod tests {
         ];
 
         let label_config = LabelConfig::new(true, true, true, true, None);
-        let results = process_read_and_anno(seq, qual, &annotations, &label_config, true, false);
+        let results =
+            process_read_and_anno(seq, qual, &annotations, &label_config, true, false, true);
 
         assert_eq!(results.len(), 1);
-        let (trimmed_seq, trimmed_qual, group_label, _) = &results[0];
+        let (trimmed_seq, trimmed_qual, group_label, _, _) = &results[0];
         println!("trimmed_seq: {}", String::from_utf8_lossy(trimmed_seq));
         assert_eq!(trimmed_seq, b"CCCCCCCCAAAACCCCCCCCCCCC");
         assert_eq!(trimmed_qual, b"________IIII____________");
         assert_eq!(group_label, "Fbar_fw__Rbar_fw");
+        assert_eq!(results[0].4, Some((8, 12, false)));
     }
 
     #[test]
@@ -781,22 +808,26 @@ mod tests {
         ];
 
         let label_config = LabelConfig::new(true, true, true, true, None);
-        let results = process_read_and_anno(seq, qual, &annotations, &label_config, false, true);
+        let results =
+            process_read_and_anno(seq, qual, &annotations, &label_config, false, true, true);
 
         assert_eq!(results.len(), 1);
-        let (trimmed_seq, trimmed_qual, group_label, _) = &results[0];
+        let (trimmed_seq, trimmed_qual, group_label, _, _) = &results[0];
         println!("trimmed_seq: {}", String::from_utf8_lossy(trimmed_seq));
         assert_eq!(trimmed_seq, b"GCCT");
         assert_eq!(trimmed_qual, b"AIII");
         assert_eq!(group_label, "Fbar_rc__Rbar_fw");
+        assert_eq!(results[0].4, Some((8, 12, true)));
 
         annotations[0].strand = Strand::Fwd;
-        let results = process_read_and_anno(seq, qual, &annotations, &label_config, false, true);
-        let (trimmed_seq, trimmed_qual, group_label, _) = &results[0];
+        let results =
+            process_read_and_anno(seq, qual, &annotations, &label_config, false, true, true);
+        let (trimmed_seq, trimmed_qual, group_label, _, _) = &results[0];
         println!("trimmed_seq: {}", String::from_utf8_lossy(trimmed_seq));
         assert_eq!(trimmed_seq, b"AGGC");
         assert_eq!(trimmed_qual, b"IIIA");
         assert_eq!(group_label, "Fbar_fw__Rbar_fw");
+        assert_eq!(results[0].4, Some((8, 12, false)));
 
         // Chaning the strand in Fbar match should give original seq and qual again
     }

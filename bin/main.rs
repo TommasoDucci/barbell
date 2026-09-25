@@ -186,6 +186,10 @@ enum Commands {
         /// Write output FASTQ files as gzip-compressed (.fastq.gz)
         #[arg(long, default_value_t = false)]
         gzip: bool,
+
+        /// Add cut coordinates on the original read to the header (bs, be, bf tags)
+        #[arg(long, default_value_t = false)]
+        return_cuts_idxs: bool,
     },
 
     /// View most common patterns in annotation
@@ -260,6 +264,10 @@ enum Commands {
         /// Write output FASTQ files as gzip-compressed (.fastq.gz)
         #[arg(long, default_value_t = false)]
         gzip: bool,
+
+        /// Add cut coordinates on the original read to the header (bs, be, bf tags)
+        #[arg(long, default_value_t = false)]
+        return_cuts_idxs: bool,
     },
 }
 
@@ -368,6 +376,7 @@ fn main() {
             flip,
             verbose,
             gzip,
+            return_cuts_idxs,
         } => {
             println!("{}", "Starting trimming...".green());
             let trim_config = TrimConfig {
@@ -382,6 +391,7 @@ fn main() {
                 flip: *flip,
                 verbose: *verbose,
                 gzip: *gzip,
+                return_cuts_idxs: *return_cuts_idxs,
             };
             match trim_matches(input, reads, output, &trim_config) {
                 Ok(_) => println!("{}", "Trimming complete!".green()),
@@ -417,6 +427,7 @@ fn main() {
             use_extended,
             alpha,
             gzip,
+            return_cuts_idxs,
         } => {
             let kit_config = KitConfig {
                 kit_name: kit.clone(),
@@ -431,6 +442,7 @@ fn main() {
                 use_extended: *use_extended,
                 alpha: *alpha,
                 gzip: *gzip,
+                return_cuts_idxs: *return_cuts_idxs,
             };
 
             if let Err(e) = demux_using_kit(input, &kit_config) {
